@@ -103,7 +103,7 @@ protected:
      cv::Mat mWorldPos;
 
      // Keyframes observing the point and associated index in keyframe
-     std::map<KeyFrame*,size_t> mObservations;
+     std::map<KeyFrame*,size_t> mObservations;  // 记录了观察到该MapPoint的KeyFrame即对应KeyFrame内的feature ID
 
      // Mean viewing direction
      cv::Mat mNormalVector;
@@ -119,7 +119,7 @@ protected:
      int mnFound;
 
      // Bad flag (we do not currently erase MapPoint from memory)
-     bool mbBad;
+     bool mbBad;  // 判断该MapPoint是否为坏点
 
      // Scale invariance distances
      float mfMinDistance;

@@ -136,7 +136,7 @@ public:
     float ComputeSceneMedianDepth(int q = 2);
 
 public:
-    static long unsigned int nNextId;
+    static long unsigned int nNextId; // @note KeyFrame类关键：计数当前是第几个KeyFrame，在Tracking追踪器重置的时候重置
     long unsigned int mnId;
     long unsigned int mnFrameId;
 
@@ -197,7 +197,7 @@ protected:
     std::vector<cv::KeyPoint> mvKeys;
     std::vector<cv::KeyPoint> mvKeysUn;
     cv::Mat mDescriptors;
-    std::vector<MapPoint*> mvpMapPoints;
+    std::vector<MapPoint*> mvpMapPoints;  // 记录第n个feature对应的MapPoint，若无对应则为NULL
 
     // BoW
     KeyFrameDatabase* mpKeyFrameDB;

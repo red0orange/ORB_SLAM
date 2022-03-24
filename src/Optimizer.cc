@@ -37,6 +37,7 @@ namespace ORB_SLAM
 
 void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag)
 {
+    // 全局BA优化，基于整个Map中的所有KeyFrame和所有Map points进行优化
     vector<KeyFrame*> vpKFs = pMap->GetAllKeyFrames();
     vector<MapPoint*> vpMP = pMap->GetAllMapPoints();
     BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag);
@@ -60,6 +61,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 
     long unsigned int maxKFid = 0;
 
+    // @note 光束法平差关键步骤：提取KeyFrame中的Pose
     // SET KEYFRAME VERTICES
     for(size_t i=0, iend=vpKFs.size(); i<iend; i++)
     {
@@ -78,6 +80,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 
     const float thHuber = sqrt(5.991);
 
+    // @note 光束法平差关键步骤：提取Map point中的World Pos（即3D点）
     // SET MAP POINT VERTICES
     for(size_t i=0, iend=vpMP.size(); i<iend;i++)
     {
@@ -124,14 +127,14 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
         }
     }
 
+    // @note 光束法平差关键步骤：进行指定迭代次数的优化！
     // Optimize!
-
     optimizer.initializeOptimization();
     optimizer.optimize(nIterations);
 
+    // @note 光束法平差关键步骤：把优化好的Pose、3D点替换原来KeyFrame、Map point中的值
     // Recover optimized data
-
-    //Keyframes
+    // Keyframes
     for(size_t i=0, iend=vpKFs.size(); i<iend; i++)
     {
         KeyFrame* pKF = vpKFs[i];
@@ -188,6 +191,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
     const float delta = sqrt(5.991);
 
+    // 构建g2o优化使用的图
     for(int i=0; i<N; i++)
     {
         MapPoint* pMP = pFrame->mvpMapPoints[i];
@@ -236,6 +240,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
     }
 
+    // 优化四次
     // We perform 4 optimizations, decreasing the inlier region
     // From second to final optimization we include only inliers in the optimization
     // At the end of each optimization we check which points are inliers
@@ -286,6 +291,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
 void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
 {    
+    // 得到Local KeyFrames（局部关键帧），根据当前帧+共视图判定
     // Local KeyFrames: First Breath Search from Current Keyframe
     list<KeyFrame*> lLocalKeyFrames;
 
@@ -301,6 +307,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
             lLocalKeyFrames.push_back(pKFi);
     }
 
+    // 所有Local KeyFrames能够观察到的MapPoints集合（避免了重复添加）
     // Local MapPoints seen in Local KeyFrames
     list<MapPoint*> lLocalMapPoints;
     for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin() , lend=lLocalKeyFrames.end(); lit!=lend; lit++)
@@ -311,14 +318,15 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
             MapPoint* pMP = *vit;
             if(pMP)
                 if(!pMP->isBad())
-                    if(pMP->mnBALocalForKF!=pKF->mnId)
+                    if(pMP->mnBALocalForKF!=pKF->mnId)  // 避免重复添加
                     {
                         lLocalMapPoints.push_back(pMP);
-                        pMP->mnBALocalForKF=pKF->mnId;
+                        pMP->mnBALocalForKF=pKF->mnId;  // 添加重复标识
                     }
         }
     }
 
+    // 得到另一部分KeyFrams。固定能观察到Local MapPoints的非Local Keyframes，用于添加约束但不优化
     // Fixed Keyframes. Keyframes that see Local MapPoints but that are not Local Keyframes
     list<KeyFrame*> lFixedCameras;
     for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
@@ -337,6 +345,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
         }
     }
 
+    // 构建优化器
     // Setup optimizer
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolverX::LinearSolverType * linearSolver;
@@ -353,6 +362,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
 
     long unsigned int maxKFid = 0;
 
+    // 构建g2o要优化的图，先添加需要进行优化的Local KeyFrams
     // SET LOCAL KEYFRAME VERTICES
     for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
     {
@@ -360,12 +370,13 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
         g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
         vSE3->setEstimate(Converter::toSE3Quat(pKFi->GetPose()));
         vSE3->setId(pKFi->mnId);
-        vSE3->setFixed(pKFi->mnId==0);
+        vSE3->setFixed(pKFi->mnId==0);  // 若包含第一关键帧，仅第一关键帧固定
         optimizer.addVertex(vSE3);
         if(pKFi->mnId>maxKFid)
             maxKFid=pKFi->mnId;
     }
 
+    // 构建g2o要优化的图，再添加不进行优化的非Local KeyFrams
     // SET FIXED KEYFRAME VERTICES
     for(list<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
     {
@@ -373,12 +384,13 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
         g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
         vSE3->setEstimate(Converter::toSE3Quat(pKFi->GetPose()));
         vSE3->setId(pKFi->mnId);
-        vSE3->setFixed(true);
+        vSE3->setFixed(true);  // 强制固定
         optimizer.addVertex(vSE3);
         if(pKFi->mnId>maxKFid)
             maxKFid=pKFi->mnId;
     }
 
+    // 构建g2o要优化的图，设置MapPoints
     // SET MAP POINT VERTICES
     const int nExpectedSize = (lLocalKeyFrames.size()+lFixedCameras.size())*lLocalMapPoints.size();
 
@@ -396,7 +408,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
 
     const float thHuber = sqrt(5.991);
 
-    for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
+    for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)  // 遍历每个点
     {
         MapPoint* pMP = *lit;
         g2o::VertexSBAPointXYZ* vPoint = new g2o::VertexSBAPointXYZ();
@@ -408,6 +420,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
 
         map<KeyFrame*,size_t> observations = pMP->GetObservations();
 
+        // MapPoints是作为边权重
         //SET EDGES
         for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
         {
@@ -446,9 +459,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
         }
     }
 
+    // 使用构建好的g2o图进行优化，进行5次迭代
     optimizer.initializeOptimization();
     optimizer.optimize(5);
 
+    // 删除outlier点
     // Check inlier observations
     for(size_t i=0, iend=vpEdges.size(); i<iend;i++)
     {
@@ -458,7 +473,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
         if(pMP->isBad())
             continue;
 
-        if(e->chi2()>5.991 || !e->isDepthPositive())
+        if(e->chi2()>5.991 || !e->isDepthPositive())  // 判断该点是否是正常点
         {
             KeyFrame* pKFi = vpEdgeKF[i];
             pKFi->EraseMapPointMatch(pMP);
@@ -469,6 +484,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
         }
     }
 
+    // 将优化完成的Keyframes和MapPoints赋值回去
     // Recover optimized data
 
     //Keyframes
@@ -488,6 +504,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag)
         pMP->UpdateNormalAndDepth();
     }
 
+
+    // 上面删除outlier点时也修正了g2o优化的图，基于修正后的图再进行10次迭代的优化
     // Optimize again without the outliers
 
     optimizer.initializeOptimization();

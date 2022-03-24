@@ -92,19 +92,20 @@ Frame::Frame(cv::Mat &im_, const double &timeStamp, ORBextractor* extractor, ORB
     mnScaleLevels = mpORBextractor->GetLevels();
     mfScaleFactor = mpORBextractor->GetScaleFactor();
 
+    // @note Frame理解关键：ORB特征的尺度不变性，缩放因子
     mvScaleFactors.resize(mnScaleLevels);
     mvLevelSigma2.resize(mnScaleLevels);
     mvScaleFactors[0]=1.0f;
-    mvLevelSigma2[0]=1.0f;
-    for(int i=1; i<mnScaleLevels; i++)
+    mvLevelSigma2[0] = 1.0f;
+    for(int i=1; i<mnScaleLevels; i++) // 从level 2开始计算
     {
-        mvScaleFactors[i]=mvScaleFactors[i-1]*mfScaleFactor;        
-        mvLevelSigma2[i]=mvScaleFactors[i]*mvScaleFactors[i];
+        mvScaleFactors[i] = mvScaleFactors[i - 1] * mfScaleFactor; // 对应ORB的特征层级公式：scaleFactor^k(k=1,2,…, nlevels)
+        mvLevelSigma2[i]=mvScaleFactors[i]*mvScaleFactors[i];  // 图像整体缩放因子要平方
     }
 
     mvInvLevelSigma2.resize(mvLevelSigma2.size());
     for(int i=0; i<mnScaleLevels; i++)
-        mvInvLevelSigma2[i]=1/mvLevelSigma2[i];
+        mvInvLevelSigma2[i]=1/mvLevelSigma2[i];  // 1/n，计算时直接用相乘即可
 
     // Assign Features to Grid Cells
     int nReserve = 0.5*N/(FRAME_GRID_COLS*FRAME_GRID_ROWS);

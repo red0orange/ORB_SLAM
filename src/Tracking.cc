@@ -120,9 +120,9 @@ Tracking::Tracking(ORBVocabulary* pVoc, FramePublisher *pFramePublisher, MapPubl
     else
         cout << "- Score: FAST" << endl;
 
-
     // ORB extractor for initialization
     // Initialization uses only points from the finest scale level
+    // 初始化仅使用来自最佳比例级别的点
     mpIniORBextractor = new ORBextractor(nFeatures*2,1.2,8,Score,fastTh);  
 
     int nMotion = fSettings["UseMotionModel"];
@@ -157,7 +157,7 @@ void Tracking::SetKeyFrameDatabase(KeyFrameDatabase *pKFDB)
     mpKeyFrameDB = pKFDB;
 }
 
-void Tracking::Run()
+void Tracking::Run()  // @note Tracking线程关键步骤：Run主函数
 {
     ros::NodeHandle nodeHandler;
     ros::Subscriber sub = nodeHandler.subscribe("/camera/image_raw", 1, &Tracking::GrabImage, this);
@@ -170,6 +170,7 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
 
     cv::Mat im;
 
+    // 转为CV图像
     // Copy the ros image message to cv::Mat. Convert to grayscale if it is a color image.
     cv_bridge::CvImageConstPtr cv_ptr;
     try
@@ -184,6 +185,7 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
 
     ROS_ASSERT(cv_ptr->image.channels()==3 || cv_ptr->image.channels()==1);
 
+    // 转为灰度图
     if(cv_ptr->image.channels()==3)
     {
         if(mbRGB)
@@ -196,9 +198,11 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
         cv_ptr->image.copyTo(im);
     }
 
+    // @note Tracking线程关键步骤：构建当前图像帧对应的Frame对象
     if(mState==WORKING || mState==LOST)
         mCurrentFrame = Frame(im,cv_ptr->header.stamp.toSec(),mpORBextractor,mpORBVocabulary,mK,mDistCoef);
     else
+        // 区别仅在于ORBextractor在初始化状态下使用作者固定的最优scale比例参数，其他情况使用外部文件设定的比例参数
         mCurrentFrame = Frame(im,cv_ptr->header.stamp.toSec(),mpIniORBextractor,mpORBVocabulary,mK,mDistCoef);
 
     // Depending on the state of the Tracker we perform different tasks
@@ -212,10 +216,12 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
 
     if(mState==NOT_INITIALIZED)
     {
+        // @note Tracking线程关键步骤：第一图像帧进来后进行的初始化
         FirstInitialization();
     }
     else if(mState==INITIALIZING)
     {
+        // @note Tracking线程关键步骤：第二图像帧进来后进行的初始化
         Initialize();
     }
     else
@@ -227,23 +233,28 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
         if(mState==WORKING && !RelocalisationRequested())
         {
             if(!mbMotionModel || mpMap->KeyFramesInMap()<4 || mVelocity.empty() || mCurrentFrame.mnId<mnLastRelocFrameId+2)
-                bOK = TrackPreviousFrame();
+                // @note Tracking线程关键步骤，在四个条件未满足时直接利用上一帧进行追踪
+                bOK = TrackPreviousFrame();  
             else
             {
+                // @note Tracking线程关键步骤，在四个条件满足时进行运动模型追踪
                 bOK = TrackWithMotionModel();
-                if(!bOK)
+                if (!bOK) // @note Tracking线程关键步骤，在运动模型追踪失败时回到直接利用上一帧进行追踪
                     bOK = TrackPreviousFrame();
             }
         }
         else
         {
+            // @note Tracking线程关键步骤，当LOST或是强制重定位时，进入重定位
             bOK = Relocalisation();
         }
 
+        // @note Tracking线程关键步骤，利用LocalMap对追踪成功的Frame进行进一步追踪修正
         // If we have an initial estimation of the camera pose and matching. Track the local map.
-        if(bOK)
+        if(bOK)  
             bOK = TrackLocalMap();
 
+        // @note Tracking线程关键步骤，如果追踪成功，判断是否插入关键帧
         // If tracking were good, check if we insert a keyframe
         if(bOK)
         {
@@ -252,6 +263,8 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
             if(NeedNewKeyFrame())
                 CreateNewKeyFrame();
 
+            // KeyFrame中运行有outlier的异常点，后续根据BA可以调整，但是不希望该帧用在下一帧时
+            // 存在outlier异常点，因此在上面传给KeyFrame后删去它们
             // We allow points with high innovation (considererd outliers by the Huber Function)
             // pass to the new keyframe, so that bundle adjustment will finally decide
             // if they are outliers or not. We don't want next frame to estimate its position
@@ -263,11 +276,13 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
             }
         }
 
+        // @note Tracking线程关键步骤，若当前帧追踪失败，进入LOST状态
         if(bOK)
             mState = WORKING;
         else
             mState=LOST;
 
+        // @note Tracking线程关键步骤，如果刚initial没多久就LOST了，重置！
         // Reset if the camera get lost soon after initialization
         if(mState==LOST)
         {
@@ -278,6 +293,7 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
             }
         }
 
+        // @note Tracking线程关键步骤，更新定义的匀速运动模型
         // Update motion model
         if(mbMotionModel)
         {
@@ -295,8 +311,9 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
         }
 
         mLastFrame = Frame(mCurrentFrame);
-     }       
+    }       
 
+    // 将当前帧的信息利用drawer可视化
     // Update drawer
     mpFramePublisher->Update(this);
 
@@ -320,6 +337,7 @@ void Tracking::GrabImage(const sensor_msgs::ImageConstPtr& msg)
 void Tracking::FirstInitialization()
 {
     //We ensure a minimum ORB features to continue, otherwise discard frame
+    // 要求当前图像帧找到的ORB features要达到100个，否则这帧跳过，还是处于等待第一图像帧的情况
     if(mCurrentFrame.mvKeys.size()>100)
     {
         mInitialFrame = Frame(mCurrentFrame);
@@ -341,6 +359,8 @@ void Tracking::FirstInitialization()
 void Tracking::Initialize()
 {
     // Check if current frame has enough keypoints, otherwise reset initialization process
+    // 要求当前图像帧找到的ORB features要达到100个，否则丢掉当前帧和初始化的第一帧，重新等待第一图像帧
+    // 即这里初始化必须要连续两个图像帧的ORB features都大于100
     if(mCurrentFrame.mvKeys.size()<=100)
     {
         fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
@@ -348,10 +368,12 @@ void Tracking::Initialize()
         return;
     }    
 
+    // 2D-2D 利用ORB描述子的特征点匹配
     // Find correspondences
     ORBmatcher matcher(0.9,true);
     int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
+    // 要求连续两帧的feature匹配数量必须大于100，否则还是重置
     // Check if there are enough correspondences
     if(nmatches<100)
     {
@@ -359,6 +381,7 @@ void Tracking::Initialize()
         return;
     }  
 
+    // @note Tracking线程关键步骤：根据两个初始2D图像帧计算初始位姿、初始3D点，并构建初始Local map？
     cv::Mat Rcw; // Current Camera Rotation
     cv::Mat tcw; // Current Camera Translation
     vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
@@ -379,7 +402,7 @@ void Tracking::Initialize()
 
 }
 
-void Tracking::CreateInitialMap(cv::Mat &Rcw, cv::Mat &tcw)
+void Tracking::CreateInitialMap(cv::Mat &Rcw, cv::Mat &tcw)  // 根据初始的两个关键帧构建Map
 {
     // Set Frame Poses
     mInitialFrame.mTcw = cv::Mat::eye(4,4,CV_32F);
@@ -409,13 +432,18 @@ void Tracking::CreateInitialMap(cv::Mat &Rcw, cv::Mat &tcw)
 
         MapPoint* pMP = new MapPoint(worldPos,pKFcur,mpMap);
 
+        // 给两个关键帧分别添加了两个关键帧匹配的MapPoint，并且记录每个MapPoint对应的Feature Index
         pKFini->AddMapPoint(pMP,i);
         pKFcur->AddMapPoint(pMP,mvIniMatches[i]);
 
+        // 给MapPoint添加了两个关键帧的信息，并且记录它自身对应每个KeyFrame的Feature Index
         pMP->AddObservation(pKFini,i);
         pMP->AddObservation(pKFcur,mvIniMatches[i]);
 
+        // 在给一个MapPoint添加了Observation后，都应该执行以下两个更新
+        // 更新MapPoint的最佳描述子，即更新pMP.mDescriptor
         pMP->ComputeDistinctiveDescriptors();
+        // 更新MapPoint的观察方向变量，是指observation观察该MapPoint的mean view direction，更新pMP.mNormalVector
         pMP->UpdateNormalAndDepth();
 
         //Fill Current Frame structure
@@ -435,6 +463,10 @@ void Tracking::CreateInitialMap(cv::Mat &Rcw, cv::Mat &tcw)
 
     Optimizer::GlobalBundleAdjustemnt(mpMap,20);
 
+    // @note Tracking线程关键步骤：初始化Map时尺度归一化
+    // 下面将构建好的Map中的3D尺度恢复为1，计算当前关键帧（即第二关键帧）对所有MapPoint的中值z轴距离
+    // 然后同时缩放关键帧的Pose的平移矩阵、所有MapPoint的WorldPos
+    // 在该初始化阶段保证尺度为1，那么后续所有帧基于initial的关键帧计算的3D尺度都能保持
     // Set median depth to 1
     float medianDepth = pKFini->ComputeSceneMedianDepth(2);
     float invMedianDepth = 1.0f/medianDepth;
@@ -462,6 +494,7 @@ void Tracking::CreateInitialMap(cv::Mat &Rcw, cv::Mat &tcw)
         }
     }
 
+    // 收尾，将两个关键帧需要记录的信息记录下来，完成初始化
     mpLocalMapper->InsertKeyFrame(pKFini);
     mpLocalMapper->InsertKeyFrame(pKFcur);
 
@@ -488,34 +521,38 @@ bool Tracking::TrackPreviousFrame()
     ORBmatcher matcher(0.9,true);
     vector<MapPoint*> vpMapPointMatches;
 
+    // 先尝试与上一帧匹配粗尺度特征
     // Search first points at coarse scale levels to get a rough initial estimate
     int minOctave = 0;
     int maxOctave = mCurrentFrame.mvScaleFactors.size()-1;
     if(mpMap->KeyFramesInMap()>5)
         minOctave = maxOctave/2+1;
-
     int nmatches = matcher.WindowSearch(mLastFrame,mCurrentFrame,200,vpMapPointMatches,minOctave);
 
+    // 若匹配特征数量不够，放弃尺度限制重新匹配
     // If not enough matches, search again without scale constraint
     if(nmatches<10)
     {
         nmatches = matcher.WindowSearch(mLastFrame,mCurrentFrame,100,vpMapPointMatches,0);
-        if(nmatches<10)
+        if(nmatches<10)  // 若还是匹配特征数量不够，判定为失败，清空置零
         {
             vpMapPointMatches=vector<MapPoint*>(mCurrentFrame.mvpMapPoints.size(),static_cast<MapPoint*>(NULL));
             nmatches=0;
         }
     }
 
+    // 初始化优化初始位姿、并设置匹配情况，最初这些在新的一帧Frame内都是没有的
     mLastFrame.mTcw.copyTo(mCurrentFrame.mTcw);
-    mCurrentFrame.mvpMapPoints=vpMapPointMatches;
+    mCurrentFrame.mvpMapPoints=vpMapPointMatches;  // @note Tracking线程关键细节：新的一帧获得MapPoint的地方
 
     // If enough correspondeces, optimize pose and project points from previous frame to search more correspondences
     if(nmatches>=10)
     {
+        // 根据初始位姿、与上一帧的匹配特征便可以进行位姿优化了（注意，上一帧特征对应的3D点已经存在的）
         // Optimize pose with correspondences
         Optimizer::PoseOptimization(&mCurrentFrame);
 
+        // 优化过程中计算失败的特征情况对应更新到Frame内
         for(size_t i =0; i<mCurrentFrame.mvbOutlier.size(); i++)
             if(mCurrentFrame.mvbOutlier[i])
             {
@@ -524,21 +561,25 @@ bool Tracking::TrackPreviousFrame()
                 nmatches--;
             }
 
+        // 初步优化位姿后，可以根据projection再次搜索匹配
         // Search by projection with the estimated pose
         nmatches += matcher.SearchByProjection(mLastFrame,mCurrentFrame,15,vpMapPointMatches);
     }
     else //Last opportunity
+        // 未能搜索足够数量特征匹配的，最后一次机会，直接根据初始位姿进行projection搜索匹配
         nmatches = matcher.SearchByProjection(mLastFrame,mCurrentFrame,50,vpMapPointMatches);
 
-
+    // 初步匹配、优化成功的MapPoint就会记录在这帧当中了
     mCurrentFrame.mvpMapPoints=vpMapPointMatches;
 
     if(nmatches<10)
         return false;
 
+    // 根据projection二次搜索匹配的结果再次优化
     // Optimize pose again with all correspondences
     Optimizer::PoseOptimization(&mCurrentFrame);
 
+    // 再次根据优化过程中计算失败的特征情况对应更新到Frame内
     // Discard outliers
     for(size_t i =0; i<mCurrentFrame.mvbOutlier.size(); i++)
         if(mCurrentFrame.mvbOutlier[i])
@@ -553,6 +594,7 @@ bool Tracking::TrackPreviousFrame()
 
 bool Tracking::TrackWithMotionModel()
 {
+    // 与TrackPreviousFrame类似，这里更直接，根据Projection进行一次性搜索匹配，然后优化
     ORBmatcher matcher(0.9,true);
     vector<MapPoint*> vpMapPointMatches;
 
@@ -843,17 +885,20 @@ bool Tracking::Relocalisation()
     // Compute Bag of Words Vector
     mCurrentFrame.ComputeBoW();
 
+    // Step 1：得到候选KeyFrames
+    // Tracking LOST 或者 force 两种情况对应不同的候选keyframe
     // Relocalisation is performed when tracking is lost and forced at some stages during loop closing
     // Track Lost: Query KeyFrame Database for keyframe candidates for relocalisation
     vector<KeyFrame*> vpCandidateKFs;
     if(!RelocalisationRequested())
         vpCandidateKFs= mpKeyFrameDB->DetectRelocalisationCandidates(&mCurrentFrame);
-    else // Forced Relocalisation: Relocate against local window around last keyframe
+    // Forced Relocalisation: Relocate against local window around last keyframe
+    else
     {
         boost::mutex::scoped_lock lock(mMutexForceRelocalisation);
         mbForceRelocalisation = false;
         vpCandidateKFs.reserve(10);
-        vpCandidateKFs = mpLastKeyFrame->GetBestCovisibilityKeyFrames(9);
+        vpCandidateKFs = mpLastKeyFrame->GetBestCovisibilityKeyFrames(9);  // 从共视图中获得9个
         vpCandidateKFs.push_back(mpLastKeyFrame);
     }
 
@@ -877,6 +922,7 @@ bool Tracking::Relocalisation()
 
     int nCandidates=0;
 
+    // Step 2：遍历每个候选KeyFrame尝试与当前Frame匹配特征
     for(size_t i=0; i<vpCandidateKFs.size(); i++)
     {
         KeyFrame* pKF = vpCandidateKFs[i];
@@ -892,6 +938,7 @@ bool Tracking::Relocalisation()
             }
             else
             {
+                // 如果匹配数量足够，直接利用与该KeyFrame的匹配做PnP
                 PnPsolver* pSolver = new PnPsolver(mCurrentFrame,vvpMapPointMatches[i]);
                 pSolver->SetRansacParameters(0.99,10,300,4,0.5,5.991);
                 vpPnPsolvers[i] = pSolver;
@@ -900,12 +947,13 @@ bool Tracking::Relocalisation()
         }        
     }
 
+    // Step 3：遍历匹配数量足够的候选KeyFrame（已经算是正选了），逐个进行
     // Alternatively perform some iterations of P4P RANSAC
     // Until we found a camera pose supported by enough inliers
     bool bMatch = false;
     ORBmatcher matcher2(0.9,true);
 
-    while(nCandidates>0 && !bMatch)
+    while(nCandidates>0 && !bMatch)  // 若所有候选框都失败了，或是有候选框成功了，退出循环
     {
         for(size_t i=0; i<vpCandidateKFs.size(); i++)
         {
@@ -945,8 +993,10 @@ bool Tracking::Relocalisation()
                         mCurrentFrame.mvpMapPoints[j]=NULL;
                 }
 
+                // 利用PnP解算的Pose作初始位姿，这里进行Pose优化
                 int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
+                // 如果优化表现不好，则弃用这个KeyFrame计算的初始位姿，重新来
                 if(nGood<10)
                     continue;
 

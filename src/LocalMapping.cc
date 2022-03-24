@@ -71,6 +71,7 @@ void LocalMapping::Run()
 
             if(!CheckNewKeyFrames() && !stopRequested())
             {
+                // @note Local Mapping线程关键步骤：Local BA优化
                 // Local BA
                 Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA);
 
@@ -131,6 +132,7 @@ void LocalMapping::ProcessNewKeyFrame()
     // Compute Bags of Words structures
     mpCurrentKeyFrame->ComputeBoW();
 
+    // 若为第一个关键帧，不添加到Local Map中
     if(mpCurrentKeyFrame->mnId==0)
         return;
 
@@ -143,6 +145,7 @@ void LocalMapping::ProcessNewKeyFrame()
             MapPoint* pMP = vpMapPointMatches[i];
             if(pMP)
             {
+                // 判断是否为坏点，@todo 坏点的标准是什么，它是在Mappoint类里面的
                 if(!pMP->isBad())
                 {
                     pMP->AddObservation(mpCurrentKeyFrame, i);
@@ -153,6 +156,7 @@ void LocalMapping::ProcessNewKeyFrame()
         }
     }
 
+    // 若为第二个关键帧，不更新
     if(mpCurrentKeyFrame->mnId==1)
     {
         for(size_t i=0; i<vpMapPointMatches.size(); i++)
@@ -165,9 +169,11 @@ void LocalMapping::ProcessNewKeyFrame()
         }
     }  
 
+    // @note Local Mapping线程关键步骤：更新新关键帧的共视图
     // Update links in the Covisibility Graph
     mpCurrentKeyFrame->UpdateConnections();
 
+    // @note Local Mapping线程关键步骤：添加新的关键帧到Local Map中
     // Insert Keyframe in Map
     mpMap->AddKeyFrame(mpCurrentKeyFrame);
 }

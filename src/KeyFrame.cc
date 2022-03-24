@@ -656,7 +656,7 @@ bool KeyFrame::IsInImage(const float &x, const float &y) const
     return (x>=mnMinX && x<mnMaxX && y>=mnMinY && y<mnMaxY);
 }
 
-float KeyFrame::ComputeSceneMedianDepth(int q)
+float KeyFrame::ComputeSceneMedianDepth(int q)  // 计算该KeyFrame与所有有匹配的MapPoint的z轴中值距离（并不是直线距离，是考虑Pose的z轴距离）
 {
     vector<MapPoint*> vpMapPoints;
     cv::Mat Tcw_;

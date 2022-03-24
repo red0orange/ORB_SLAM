@@ -80,7 +80,7 @@ public:
 
     // Initialization Variables
     std::vector<int> mvIniLastMatches;
-    std::vector<int> mvIniMatches;
+    std::vector<int> mvIniMatches;  // 初始关键帧(即第一关键帧)每个Feature与第二关键帧中Feature的匹配index，若无匹配则为-1
     std::vector<cv::Point2f> mvbPrevMatched;
     std::vector<cv::Point3f> mvIniP3D;
     Frame mInitialFrame;

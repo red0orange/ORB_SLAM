@@ -185,6 +185,7 @@ float MapPoint::GetFoundRatio()
 void MapPoint::ComputeDistinctiveDescriptors()
 {
     // Retrieve all observed descriptors
+    // 每个描述子的类型是cv::Mat
     vector<cv::Mat> vDescriptors;
 
     map<KeyFrame*,size_t> observations;
@@ -199,8 +200,9 @@ void MapPoint::ComputeDistinctiveDescriptors()
     if(observations.empty())
         return;
 
-    vDescriptors.reserve(observations.size());
+    vDescriptors.reserve(observations.size()); // 设置和observations相同的大小
 
+    // 把每个KeyFrame中该MapPoint对应的描述子取出来放进vDescriptors临时变量中
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
         KeyFrame* pKF = mit->first;
@@ -212,10 +214,11 @@ void MapPoint::ComputeDistinctiveDescriptors()
     if(vDescriptors.empty())
         return;
 
+    // 计算vDescriptors中所有描述子的两两距离，距离函数是ORBmatcher::DescriptorDistance
     // Compute distances between them
     const size_t N = vDescriptors.size();
 
-    float Distances[N][N];
+    float Distances[N][N];  // 方矩阵
     for(size_t i=0;i<N;i++)
     {
         Distances[i][i]=0;
@@ -230,19 +233,21 @@ void MapPoint::ComputeDistinctiveDescriptors()
     // Take the descriptor with least median distance to the rest
     int BestMedian = INT_MAX;
     int BestIdx = 0;
-    for(size_t i=0;i<N;i++)
+    for(size_t i=0;i<N;i++)  // 遍历每一行
     {
+        // 取出每一行到一个vector中并sort
         vector<int> vDists(Distances[i],Distances[i]+N);
         sort(vDists.begin(),vDists.end());
-        int median = vDists[0.5*(N-1)];
+        int median = vDists[0.5*(N-1)];  // 取出中值
 
-        if(median<BestMedian)
+        if(median<BestMedian)  // 得到最小的中值，相当于找到中值最小的一行
         {
             BestMedian = median;
             BestIdx = i;
         }
     }
 
+    // @note MapPoint理解关键：作者应该想利用 中值小 -> 整体小 的对应，然后得到“对于当前MapPoint，和所有描述子距离最小的最佳描述子”
     {
         boost::mutex::scoped_lock lock(mMutexFeatures);
         mDescriptor = vDescriptors[BestIdx].clone();       
@@ -291,23 +296,23 @@ void MapPoint::UpdateNormalAndDepth()
     {
         KeyFrame* pKF = mit->first;
         cv::Mat Owi = pKF->GetCameraCenter();
-        cv::Mat normali = mWorldPos - Owi;
-        normal = normal + normali/cv::norm(normali);
+        cv::Mat normali = mWorldPos - Owi;  // camera 指向该 MapPoint的方向向量
+        normal = normal + normali/cv::norm(normali);  // 归一化方向向量，并叠加到normal先
         n++;
     } 
 
     cv::Mat PC = Pos - pRefKF->GetCameraCenter();
-    const float dist = cv::norm(PC);
-    const int level = pRefKF->GetKeyPointScaleLevel(observations[pRefKF]);
+    const float dist = cv::norm(PC); // camera 指向该 MapPoint的方向向量的长度，即camera 到该 MapPoint的距离
+    const int level = pRefKF->GetKeyPointScaleLevel(observations[pRefKF]);  // 获得该MapPoint在KeyFrame中对应ORB特征的尺度
     const float scaleFactor = pRefKF->GetScaleFactor();
     const float levelScaleFactor =  pRefKF->GetScaleFactor(level);
     const int nLevels = pRefKF->GetScaleLevels();
 
     {
         boost::mutex::scoped_lock lock3(mMutexPos);
-        mfMinDistance = (1.0f/scaleFactor)*dist / levelScaleFactor;
-        mfMaxDistance = scaleFactor*dist * pRefKF->GetScaleFactor(nLevels-1-level);
-        mNormalVector = normal/n;
+        mfMinDistance = (1.0f/scaleFactor)*dist / levelScaleFactor;  // 不知道有什么用，经过缩放因子后的dist
+        mfMaxDistance = scaleFactor*dist * pRefKF->GetScaleFactor(nLevels-1-level); // 不知道有什么用，经过缩放因子后的dist
+        mNormalVector = normal/n;  // 除以总observation数量，得到平均归一化方向向量
     }
 }
 
